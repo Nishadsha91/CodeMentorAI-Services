@@ -1,0 +1,351 @@
+services:
+  # ============================
+  # RABBITMQ
+  # ============================
+  rabbitmq:
+    image: rabbitmq:3-management
+    container_name: rabbitmq
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+    environment:
+      RABBITMQ_DEFAULT_USER: guest
+      RABBITMQ_DEFAULT_PASS: guest
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    networks:
+      - cm_network
+
+  # ============================
+  # REDIS
+  # ============================
+  redis:
+    image: redis:7-alpine
+    container_name: redis
+    ports:
+      - "6379:6379"
+    networks:
+      - cm_network
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    volumes:
+      - redis_data:/data
+
+  # ============================
+  # AUTH DATABASE
+  # ============================
+  auth_db:
+    image: postgres:15
+    container_name: auth_db
+    environment:
+      POSTGRES_DB: auth_db
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: 123456
+    volumes:
+      - auth_db_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    networks:
+      - cm_network
+    ports:
+      - "5433:5432"
+
+  # ============================
+  # AUTH SERVICE
+  # ============================
+  auth_service:
+    build: ./auth-service
+    container_name: auth_service
+    env_file:
+      - ./auth-service/.env
+    depends_on:
+      auth_db:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    ports:
+      - "8000:8000"
+    networks:
+      - cm_network
+
+  # ============================
+  # PROFILE DATABASE
+  # ============================
+  profile_db:
+    image: postgres:15
+    container_name: profile_db
+    environment:
+      POSTGRES_DB: profile_db
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: 123456
+    volumes:
+      - profile_db_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    networks:
+      - cm_network
+    ports:
+      - "5440:5432"
+
+  # ============================
+  # PROFILE SERVICE
+  # ============================
+  profile_service:
+    build: ./profile-service
+    container_name: profile_service
+    env_file:
+      - ./profile-service/.env
+    depends_on:
+      profile_db:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    ports:
+      - "8001:8001"
+    networks:
+      - cm_network
+
+  # ============================
+  # PROBLEM DATABASE
+  # ============================
+  problem_db:
+    image: postgres:15
+    container_name: problem_db
+    environment:
+      POSTGRES_DB: problem_db
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: 123456
+    volumes:
+      - problem_db_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    networks:
+      - cm_network
+    ports:
+      - "5442:5432"
+
+  # ============================
+  # PROBLEM SERVICE
+  # ============================
+  problem_service:
+    build: ./problem-service
+    container_name: problem_service
+    env_file:
+      - ./problem-service/.env
+    volumes:
+      - ./problem-service:/app
+    depends_on:
+      problem_db:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    ports:
+      - "8004:8004"
+    networks:
+      - cm_network
+
+  # ============================
+  # CELERY WORKER
+  # ============================
+  celery_worker:
+    build: ./problem-service
+    container_name: celery_worker
+    command: celery -A problem_service worker -l info --concurrency=4
+    env_file:
+      - ./problem-service/.env
+    depends_on:
+      problem_db:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - cm_network
+    environment:
+      CELERY_BROKER_URL: amqp://guest:guest@rabbitmq:5672//
+      CELERY_RESULT_BACKEND: redis://redis:6379/0
+      DJANGO_SETTINGS_MODULE: problem_service.settings
+    volumes:
+      - ./problem-service:/app
+
+  # ============================
+  # EXECUTION SERVICE
+  # ============================
+  execution-service:
+    build: ./execution-service
+    container_name: execution-service
+    env_file:
+      - ./execution-service/.env
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+    ports:
+      - "8005:8005"
+    networks:
+      - cm_network
+
+  # ============================
+  # AI MENTOR DATABASE
+  # ============================
+  ai_mentor_db:
+    image: postgres:15
+    container_name: ai_mentor_db
+    environment:
+      POSTGRES_DB: ai_mentor_db
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: 123456
+    volumes:
+      - ai_mentor_db_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    networks:
+      - cm_network
+    ports:
+      - "5445:5432"
+
+  # ============================
+  # AI MENTOR SERVICE
+  # ============================
+  ai_mentor_service:
+    build: ./ai-mentor-service
+    container_name: ai_mentor_service
+    env_file:
+      - ./ai-mentor-service/.env
+    depends_on:
+      ai_mentor_db:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    ports:
+      - "8006:8006"
+    networks:
+      - cm_network
+    volumes:
+      - ./ai-mentor-service:/app
+
+  # ============================
+  # AI MENTOR CELERY WORKER
+  # ============================
+  ai_mentor_celery_worker:
+    build: ./ai-mentor-service
+    container_name: ai_mentor_celery_worker
+    command: celery -A ai_mentor_service.celery:app worker -l info --pool=solo
+    env_file:
+      - ./ai-mentor-service/.env
+    depends_on:
+      ai_mentor_db:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - cm_network
+    environment:
+      CELERY_BROKER_URL: amqp://guest:guest@rabbitmq:5672//
+      CELERY_RESULT_BACKEND: redis://redis:6379/0
+      DJANGO_SETTINGS_MODULE: ai_mentor_service.settings
+    volumes:
+      - ./ai-mentor-service:/app
+
+  # ============================
+  # PAIR PROGRAMMING DATABASE
+  # ============================
+  pair_db:
+    image: postgres:15
+    container_name: pair_db
+    environment:
+      POSTGRES_DB: pair_db
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: 123456
+    volumes:
+      - pair_db_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    networks:
+      - cm_network
+    ports:
+      - "5443:5432"
+
+  # ============================
+  # PAIR PROGRAMMING SERVICE
+  # ============================
+  pair_programming_service:
+    build: ./pair-programming-service
+    container_name: pair_programming_service
+    env_file:
+      - ./pair-programming-service/.env
+    volumes:
+      - ./pair-programming-service:/app
+    depends_on:
+      pair_db:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    ports:
+      - "8007:8007"
+    networks:
+      - cm_network
+    environment:
+      DATABASE_URL: postgresql://postgres:123456@pair_db:5432/pair_db
+      REDIS_URL: redis://redis:6379/1
+      RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672//
+      CELERY_BROKER_URL: amqp://guest:guest@rabbitmq:5672//
+      CELERY_RESULT_BACKEND: redis://redis:6379/1
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8007/api/health/" ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+
+# ============================
+# VOLUMES
+# ============================
+volumes:
+  auth_db_data:
+  profile_db_data:
+  problem_db_data:
+  ai_mentor_db_data:
+  pair_db_data:
+  redis_data:
+
+# ============================
+# NETWORK
+# ============================
+networks:
+  cm_network:
+    driver: bridge
